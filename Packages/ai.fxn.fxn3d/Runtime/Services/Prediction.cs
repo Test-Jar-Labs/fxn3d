@@ -8,6 +8,7 @@
 namespace Function.Services {
 
     using System;
+    using System.Threading;
     using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
@@ -32,6 +33,7 @@ namespace Function.Services {
     public sealed class PredictionService {
 
         #region --Client API--
+
         /// <summary>
         /// Create a prediction.
         /// </summary>
@@ -43,6 +45,7 @@ namespace Function.Services {
         /// <param name="device">Prediction device. Do not set this unless you know what you are doing. This only applies to `EDGE` predictions.</param>
         /// <param name="client">Function client identifier. Specify this to override the current client identifier.</param>
         /// <param name="configuration">Configuration identifier. Specify this to override the current client configuration token.</param>
+        /// <param name="async">Determines whether this is asynchronous.</param>
         public async Task<Prediction> Create (
             string tag,
             Dictionary<string, object?>? inputs = null,
@@ -51,11 +54,16 @@ namespace Function.Services {
             Acceleration acceleration = default,
             IntPtr device = default,
             string? client = default,
-            string? configuration = default
+            string? configuration = default,
+            bool async = false
         ) {
             // Check cache
             if (cache.TryGetValue(tag, out var p) && !rawOutputs)
-                return Predict(tag, p, inputs!);
+            {
+                return async ? await PredictAsync(tag, p, inputs!)
+                    : Predict(tag, p, inputs!);
+            }
+            
             // Collect inputs
             var key = Guid.NewGuid().ToString();
             var values = inputs != null ?
@@ -80,7 +88,12 @@ namespace Function.Services {
             var predictor = await Load(prediction, acceleration, device);
             cache.Add(prediction.tag, predictor);
             // Return
-            return inputs != null ? Predict(tag, predictor, inputs) : prediction;
+            if (inputs == null)
+            {
+                return prediction;
+            }
+            return async ? await PredictAsync(tag, predictor, inputs) 
+                : Predict(tag, predictor, inputs);
         }
 
         /// <summary>
@@ -90,6 +103,7 @@ namespace Function.Services {
         /// <param name="inputs">Input values.</param>
         /// <param name="rawOutputs">Skip parsing output values into plain values.</param>
         /// <param name="dataUrlLimit">Return a data URL if a given output value is smaller than this size.</param>
+        /// <param name="async">Determines whether to stream in a prediction async.</param>
         public async IAsyncEnumerable<Prediction> Stream ( // INCOMPLETE // Edge support
             string tag,
             Dictionary<string, object?>? inputs = null,
@@ -98,11 +112,13 @@ namespace Function.Services {
             Acceleration acceleration = default,
             IntPtr device = default,
             string? client = default,
-            string? configuration = default
+            string? configuration = default,
+            bool async = false
         ) {
             // Check cache
             if (cache.TryGetValue(tag, out var p) && !rawOutputs) {
-                yield return Predict(tag, p, inputs!);
+                yield return async ? await PredictAsync(tag, p, inputs!) 
+                    : Predict(tag, p, inputs!);
                 yield break;
             }
             // Collect inputs
@@ -131,8 +147,13 @@ namespace Function.Services {
                 // Load
                 var predictor = await Load(prediction, acceleration, device);
                 cache.Add(prediction.tag, predictor);
+                if (inputs == null)
+                {
+                    yield return prediction;
+                }
                 // Yield
-                yield return inputs != null ? Predict(tag, predictor, inputs) : prediction;
+                yield return async ? await PredictAsync(tag, predictor, inputs!) 
+                    : Predict(tag, predictor, inputs!);
             }
         }
 
@@ -307,6 +328,51 @@ namespace Function.Services {
             return predictor;
         }
 
+        private async Task<Prediction> PredictAsync(string tag,
+            IntPtr predictor, Dictionary<string, object?> inputs)
+        {
+            IntPtr inputMap = default;
+            IntPtr prediction = default;
+            try
+            {
+                // Marshal inputs
+                Function.CreateValueMap(out inputMap).Throw();
+                foreach (var pair in inputs)
+                    inputMap.SetValueMapValue(pair.Key, ToValue(pair.Value)).Throw();
+                var output = await CreatePredictionAsync(
+                    predictor, inputMap);
+                output.status.Throw();
+                prediction = output.prediction;
+                return PredictInternal(tag, ref prediction);
+            }
+            finally
+            {
+                inputMap.ReleaseValueMap();
+                if (prediction != IntPtr.Zero)
+                {
+                    prediction.ReleasePrediction();
+                }
+            }
+        }
+        
+        private Task<(Status status, IntPtr prediction)> CreatePredictionAsync(
+            IntPtr predictor, IntPtr inputMap)
+        {
+            var tcs = new TaskCompletionSource<(Status status, IntPtr prediction)>();
+            var tuple = (tcs, predictor, inputMap);
+            if (!ThreadPool.QueueUserWorkItem((ctx) =>
+                {
+                    var status = ctx.predictor.CreatePrediction(ctx.inputMap, 
+                        out var prediction);
+                    ctx.tcs.SetResult((status, prediction));
+                }, tuple, false))
+            {
+                tcs.SetResult((Status.InvalidOperation, IntPtr.Zero));
+                return tcs.Task;
+            }
+            return tcs.Task;
+        }
+
         private Prediction Predict (
             string tag,
             IntPtr predictor,
@@ -321,6 +387,21 @@ namespace Function.Services {
                     inputMap.SetValueMapValue(pair.Key, ToValue(pair.Value)).Throw();
                 // Predict
                 predictor.CreatePrediction(inputMap, out prediction).Throw();
+                return PredictInternal(tag, ref prediction);
+            } finally {
+                inputMap.ReleaseValueMap();
+                // Releases the prediction if valid.
+                if (prediction != IntPtr.Zero)
+                {
+                    prediction.ReleasePrediction();
+                }
+            }
+        }
+
+        private Prediction PredictInternal(string tag, ref IntPtr prediction)
+        {
+            try
+            {
                 // Get prediction id
                 var idBuffer = new StringBuilder(2048);
                 prediction.GetPredictionID(idBuffer, idBuffer.Capacity).Throw();
@@ -355,9 +436,11 @@ namespace Function.Services {
                     error = error,
                     logs = logs,
                 };
-            } finally {
-                inputMap.ReleaseValueMap();
+            }
+            finally
+            {
                 prediction.ReleasePrediction();
+                prediction = IntPtr.Zero;
             }
         }
 
