@@ -57,6 +57,7 @@ namespace Function.Services {
             string? configuration = default,
             bool async = false
         ) {
+            await FunctionUtils.Initialization;
             // Check cache
             if (cache.TryGetValue(tag, out var p) && !rawOutputs)
             {
@@ -115,6 +116,7 @@ namespace Function.Services {
             string? configuration = default,
             bool async = false
         ) {
+            await FunctionUtils.Initialization;
             // Check cache
             if (cache.TryGetValue(tag, out var p) && !rawOutputs) {
                 yield return async ? await PredictAsync(tag, p, inputs!) 
@@ -162,16 +164,17 @@ namespace Function.Services {
         /// </summary>
         /// <param name="tag">Predictor tag.</param>
         /// <returns>Whether the edge predictor was successfully deleted from memory.</returns>
-        public Task<bool> Delete (string tag) {
+        public async Task<bool> Delete (string tag) {
+            await FunctionUtils.Initialization;
             // Check
             if (!cache.TryGetValue(tag, out var predictor))
-                return Task.FromResult(false);
+                return false;
             // Release
             predictor.ReleasePredictor().Throw();
             // Pop
             cache.Remove(tag);
             // Return
-            return Task.FromResult(true);
+            return true;
         }
 
         /// <summary>
@@ -316,8 +319,7 @@ namespace Function.Services {
             // Add resources
             foreach (var resource in prediction.resources!)
                 if (ResourceTypes.Contains(resource.type))
-                    await AddConfigurationResource(
-                        configuration,
+                    await configuration.AddConfigurationResourceAsync(
                         resource.type,
                         await Retrieve(resource)
                     );
@@ -470,26 +472,6 @@ namespace Function.Services {
             }));
             // Return
             return results;
-        }
-
-        private static Task AddConfigurationResource (IntPtr configuration, string type, string path) {
-            var tcs = new TaskCompletionSource<bool>();
-            var context = GCHandle.Alloc(tcs, GCHandleType.Normal);
-            configuration.AddConfigurationResourceAsync(type, path, OnAddConfigurationResource, (IntPtr)context);
-            return tcs.Task;
-        }
-
-        [MonoPInvokeCallback(typeof(Function.ResourceAddHandler))]
-        private static void OnAddConfigurationResource (IntPtr context, Status status) {
-            var handle = (GCHandle)context;
-            var tcs = handle.Target as TaskCompletionSource<bool>;
-            handle.Free();
-            try {
-                status.Throw();
-                tcs?.SetResult(true);
-            } catch (Exception ex) {
-                tcs?.SetException(ex);
-            }
         }
         #endregion
 
