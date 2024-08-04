@@ -18,13 +18,10 @@ Add the following items to your Unity project's `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "ai.fxn.fxn3d": "0.0.24"
+    "ai.fxn.fxn3d": "0.0.25"
   }
 }
 ```
-
-> [!IMPORTANT]  
-> When building for WebGL, make sure that the `Enable Exceptions` setting in Player Settings > Publishing Settings is set to `Full With Stacktrace`. Other exception modes will currently raise errors.
 
 ## Retrieving your Access Key
 Head over to [fxn.ai](https://fxn.ai) to create an account by logging in. Once you do, generate an access key:
