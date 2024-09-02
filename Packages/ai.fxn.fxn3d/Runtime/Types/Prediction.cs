@@ -11,6 +11,7 @@ namespace Function.Types {
     using System;
     using Newtonsoft.Json;
     using Newtonsoft.Json.Converters;
+    using Internal;
 
     /// <summary>
     /// Prediction.
@@ -27,6 +28,11 @@ namespace Function.Types {
         /// Predictor tag.
         /// </summary>
         public string tag;
+        
+        /// <summary>
+        /// Predictor type.
+        /// </summary>
+        public PredictorType type;
 
         /// <summary>
         /// Date created.

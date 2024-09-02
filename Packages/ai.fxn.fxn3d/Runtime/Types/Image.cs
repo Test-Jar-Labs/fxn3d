@@ -8,6 +8,7 @@
 namespace Function.Types {
 
     using Newtonsoft.Json;
+    using Internal;
 
     /// <summary>
     /// Image.

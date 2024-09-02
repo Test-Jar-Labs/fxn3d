@@ -6,19 +6,26 @@
 namespace Function.Tests {
 
     using System.Runtime.InteropServices;
+    using System.Text;
     using UnityEngine;
-    using C;
+    using Internal;
 
     internal sealed class FxncVersionTest : MonoBehaviour {
 
         private async void Start () {
-            await Configuration.InitializationTask;
+            await FunctionUtils.Initialization;
             Debug.Log("Initialized Function!");
             // Version
             var version = Marshal.PtrToStringAuto(Function.GetVersion());
             Debug.Log($"Function {version}");
-            Debug.Log($"Client: {Configuration.ClientId}");
-            Debug.Log($"Configuration: {Configuration.ConfigurationId}");
+            // Client
+            var clientId = new StringBuilder(64);
+            Function.GetConfigurationClientID(clientId, clientId.Capacity);
+            Debug.Log($"Client: {clientId}");
+            // Configuration
+            var configId = new StringBuilder(2048);
+            Function.GetConfigurationUniqueID(configId, configId.Capacity);
+            Debug.Log($"Configuration: {configId}");
         }
     }
 }
